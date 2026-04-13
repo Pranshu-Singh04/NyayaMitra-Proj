@@ -184,7 +184,9 @@ class HallucinationEvaluator:
                     print(f"         ❌ {e}")
 
                 all_results.append(rec)
-                time.sleep(0.3)
+                # Gemini free tier: ~15 RPM limit — 4s keeps us well within quota
+                delay = 4.0 if self.model_name == "gemini" else 0.5
+                time.sleep(delay)
 
         ts   = time.strftime("%Y%m%d_%H%M%S")
         path = self.output_dir / f"hallucination_eval_{self.model_name}_{ts}.json"
@@ -199,6 +201,11 @@ class HallucinationEvaluator:
 
     # ── 2. RAG vs no-RAG ablation ─────────────────────────────────────────────
     def run_rag_vs_no_rag(self):
+        # Give Gemini free tier time to reset after the eval phase
+        if self.model_name == "gemini":
+            print("\n[Waiting 30s for Gemini rate limit to reset before ablation...]")
+            time.sleep(30)
+
         print(f"\n{'='*55}")
         print("PHASE 4B: RAG vs NO-RAG ABLATION STUDY")
         print(f"{'='*55}")
@@ -250,7 +257,9 @@ class HallucinationEvaluator:
             print(f"  RAG:    grounding={rg:.1%}  hallucination={rh:.1%}")
             print(f"  no-RAG: grounding={ng:.1%}  hallucination={nh:.1%}")
             print(f"  Delta:  Δgrounding={dg:+.1%}")
-            time.sleep(0.5)
+            # Gemini free tier: 4s delay between calls (each ablation query = 2 LLM calls)
+            delay = 8.0 if self.model_name == "gemini" else 1.0
+            time.sleep(delay)
 
         ts   = time.strftime("%Y%m%d_%H%M%S")
         path = self.output_dir / f"rag_vs_no_rag_{self.model_name}_{ts}.json"

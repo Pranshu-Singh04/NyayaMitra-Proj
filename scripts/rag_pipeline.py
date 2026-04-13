@@ -63,14 +63,28 @@ def parse_ljp_prediction(raw_text: str) -> dict:
     Returns {"prediction": str|None, "confidence": str, "citations": list[str]}
     """
     text = raw_text.upper().strip()
+    # Strip markdown bold/italic so **PREDICTION: ALLOWED** is parsed correctly
+    text = re.sub(r'\*+', '', text)
     prediction = None
 
-    # Priority 1: explicit PREDICTION: label
+    # Priority 1: explicit PREDICTION: label (handles [brackets], markdown stripped)
     m = re.search(
-        r'PREDICTION\s*:\s*\[?(PARTIALLY\s+ALLOWED|ALLOWED|DISMISSED)\]?', text
+        r'PREDICTION\s*:\s*\[?(PARTIALLY\s+ALLOWED|PARTLY\s+ALLOWED|ALLOWED|DISMISSED|CONVICTED|ACQUITTED|GRANTED|REJECTED|UPHELD|OVERTURNED)\]?',
+        text
     )
     if m:
-        prediction = m.group(1).strip()
+        raw_pred = m.group(1).strip()
+        # Normalise synonyms → canonical labels
+        synonym_map = {
+            "PARTLY ALLOWED"  : "PARTIALLY ALLOWED",
+            "GRANTED"         : "ALLOWED",
+            "UPHELD"          : "ALLOWED",
+            "ACQUITTED"       : "ALLOWED",
+            "REJECTED"        : "DISMISSED",
+            "OVERTURNED"      : "DISMISSED",
+            "CONVICTED"       : "DISMISSED",   # conviction = appeal dismissed
+        }
+        prediction = synonym_map.get(raw_pred, raw_pred)
 
     # Priority 2: scan lines for first unambiguous verdict word
     if not prediction:
@@ -86,12 +100,24 @@ def parse_ljp_prediction(raw_text: str) -> dict:
             if re.search(r"\bDISMISSED\b", line):
                 prediction = "DISMISSED"
                 break
+            if re.search(r"\bACQUITTED\b", line):
+                prediction = "ALLOWED"
+                break
+            if re.search(r"\bCONVICTED\b", line):
+                prediction = "DISMISSED"
+                break
+            if re.search(r"\bGRANTED\b", line) and "NOT GRANTED" not in line:
+                prediction = "ALLOWED"
+                break
+            if re.search(r"\bREJECTED\b", line):
+                prediction = "DISMISSED"
+                break
 
     # Priority 3: keyword frequency vote
     if not prediction:
-        a_count = len(re.findall(r"\bALLOWED\b", text))
-        d_count = len(re.findall(r"\bDISMISSED\b", text))
-        p_count = len(re.findall(r"\bPARTIALLY\b", text))
+        a_count = len(re.findall(r"\bALLOWED\b|\bGRANTED\b|\bACQUITTED\b|\bUPHELD\b", text))
+        d_count = len(re.findall(r"\bDISMISSED\b|\bREJECTED\b|\bCONVICTED\b|\bOVERTURNED\b", text))
+        p_count = len(re.findall(r"\bPARTIALLY\b|\bPARTLY\b", text))
         if p_count > 0 and p_count >= min(a_count, d_count):
             prediction = "PARTIALLY ALLOWED"
         elif a_count > d_count:
@@ -378,6 +404,10 @@ class NyayaMitraPipeline:
             if qt == QueryType.LJP:
                 if parsed.abstained:
                     print(f"LJP       : ABSTAINED (LOW confidence)")
+                elif not parsed.prediction:
+                    # Show first 200 chars of raw response to help diagnose parsing failures
+                    preview = (llm_resp.text or "")[:200].replace("\n", " ")
+                    print(f"LJP       : [PARSE FAILED] raw='{preview}'")
                 else:
                     print(f"LJP       : {parsed.prediction} ({parsed.confidence})")
 
