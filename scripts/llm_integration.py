@@ -433,8 +433,8 @@ class GroqLLM(BaseLLM):
     Models: llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768
     """
 
-    MODEL_NAME  = "llama-3.3-70b-versatile"
-    MAX_TOKENS  = 2048
+    MODEL_NAME  = "llama-3.1-8b-instant"   # 20k TPM (vs 6k for 70b) — needed for long LJP prompts
+    MAX_TOKENS  = 1024
     TEMPERATURE = 0.3
     BASE_URL    = "https://api.groq.com/openai/v1"
 
@@ -509,6 +509,7 @@ class GroqLLM(BaseLLM):
                           f" {type(e).__name__} — waiting {delay:.0f}s")
                     time.sleep(delay)
                 else:
+                    print(f"    [Groq error] {type(e).__name__}: {str(e)[:150]}")
                     return LLMResponse("", self.model_id,
                                        (time.time()-t0)*1000, error=str(e))
         return LLMResponse("", self.model_id,
