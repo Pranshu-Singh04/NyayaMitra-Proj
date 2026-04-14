@@ -438,8 +438,8 @@ class GroqLLM(BaseLLM):
     Models: llama-3.3-70b-versatile, llama-3.1-8b-instant, mixtral-8x7b-32768
     """
 
-    MODEL_NAME  = "llama-3.1-8b-instant"   # 20k TPM (vs 6k for 70b) — needed for long LJP prompts
-    MAX_TOKENS  = 1024
+    MODEL_NAME  = "llama-3.3-70b-versatile"  # 6k TPM — prompts kept <1500 tokens to fit
+    MAX_TOKENS  = 512
     TEMPERATURE = 0.3
     BASE_URL    = "https://api.groq.com/openai/v1"
 

@@ -374,7 +374,7 @@ class LJPAccuracyEvaluator:
         if self.model_name == "gemini":
             inter_query_delay = 5.0    # Gemini 2.0 Flash free: 15 RPM → need >4s between queries
         elif self.model_name == "groq":
-            inter_query_delay = 12.0
+            inter_query_delay = 20.0   # 70b: 6k TPM, ~1200 tok/query → 3 q/min max → 20s delay
         else:
             inter_query_delay = 0.5
 

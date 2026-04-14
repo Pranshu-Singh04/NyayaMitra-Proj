@@ -332,44 +332,63 @@ class PromptBuilderV2:
                 n_statutes     = 3
                 chars_statute  = 600
                 facts_limit    = 2500
-            else:                          # groq
+            else:                          # groq (llama-3.3-70b, 6k TPM)
+                # Keep total prompt under ~1200 tokens to stay within TPM budget
                 n_cases        = 3
-                chars_per_case = 600
-                n_statutes     = 2
-                chars_statute  = 400
-                facts_limit    = 1800
+                chars_per_case = 500
+                n_statutes     = 1
+                chars_statute  = 300
+                facts_limit    = 1500
 
             brief_cases    = format_cases(cases[:n_cases],    max_chars_per_case=chars_per_case)
             brief_statutes = format_statutes(statutes[:n_statutes], max_chars_per_statute=chars_statute)
 
-            # Build an explicit outcome summary so the model can pattern-match
+            # Build an explicit outcome summary + pattern count
             outcome_summary = ""
             if cases:
                 lines = []
+                allowed_count   = 0
+                dismissed_count = 0
                 for i, c in enumerate(cases[:n_cases], 1):
-                    outcome = c.get("outcome", "Unknown")
+                    outcome = str(c.get("outcome", "Unknown")).upper()
                     name    = c.get("case_name", c.get("filename", f"Case {i}"))
-                    lines.append(f"  [Case {i}] Outcome: {outcome} — {str(name)[:60]}")
+                    lines.append(f"  [Case {i}] -> {outcome}: {str(name)[:50]}")
+                    if "ALLOW" in outcome or "GRANT" in outcome:
+                        allowed_count += 1
+                    elif "DISMISS" in outcome or "REJECT" in outcome:
+                        dismissed_count += 1
+                pattern = (
+                    f"{dismissed_count} DISMISSED, {allowed_count} ALLOWED"
+                    if (dismissed_count + allowed_count) > 0
+                    else "mixed outcomes"
+                )
                 outcome_summary = (
-                    "OUTCOME SUMMARY OF SIMILAR CASES:\n"
+                    f"OUTCOMES OF SIMILAR CASES ({pattern} in database):\n"
                     + "\n".join(lines)
                     + "\n\n"
                 )
 
+            # Court prior: Indian appellate courts dismiss ~60-65% of criminal appeals
+            court_prior = (
+                "PRIOR: Indian courts dismiss approximately 60-65% of criminal "
+                "appeals. Only predict ALLOWED if the case facts or similar cases "
+                "strongly support it.\n\n"
+            )
+
             user = (
                 f"You are a legal judgment predictor for Indian courts.\n\n"
+                f"{court_prior}"
                 f"CASE FACTS:\n{case_facts[:facts_limit]}\n\n"
                 f"{outcome_summary}"
-                f"SIMILAR CASES (full details):\n{brief_cases}\n\n"
-                f"APPLICABLE STATUTES:\n{brief_statutes}\n\n"
-                f"Based on the case facts and how similar cases were decided above, "
+                f"SIMILAR CASES:\n{brief_cases}\n\n"
+                f"APPLICABLE LAW:\n{brief_statutes}\n\n"
+                f"Based on the case facts and similar case outcomes above, "
                 f"predict the outcome.\n"
-                f"Reply in EXACTLY this format (no other text before or after):\n\n"
+                f"Reply in EXACTLY this format:\n\n"
                 f"PREDICTION: {pred_options}\n"
                 f"CONFIDENCE: HIGH or MEDIUM or LOW\n"
                 f"REASONING: One sentence explaining your prediction.\n\n"
-                f"CRITICAL: The PREDICTION line must contain exactly one of: "
-                f"{pred_options}. No other words on that line."
+                f"CRITICAL: PREDICTION must be exactly one of: {pred_options}."
             )
             return Prompt(
                 system_prompt = self.SYSTEM_BASE,
