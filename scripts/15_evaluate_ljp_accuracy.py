@@ -110,7 +110,7 @@ def load_nyaya_anumana(n: int, split: str = "binary", seed: int = 42, data_dir: 
 
     except Exception as e:
         print(f"  HuggingFace load failed ({e}). Trying local CSV fallback...")
-        rows = _load_local_csv(n * 3, split)
+        rows = _load_local_csv(n * 3, split, data_dir=data_dir)
 
     usable = []
     for row in rows:
@@ -197,18 +197,37 @@ def _load_from_jsonl(data_dir: str, n: int, split: str, seed: int = 42) -> list[
     return rows[:n * 3]   # over-sample for normalise filtering
 
 
-def _load_local_csv(n: int, split: str) -> list[dict]:
+def _load_local_csv(n: int, split: str, data_dir: str = None) -> list[dict]:
     """Fallback: load from the local NyayaAnumana CSV subset."""
-    import csv
+    import csv, sys
+    # Legal case text can be huge — remove the default 131KB field size limit
+    csv.field_size_limit(min(sys.maxsize, 10_000_000))
+
+    csv_candidates = []
+
+    # If caller passed a data_dir, search it first
+    if data_dir:
+        d = Path(data_dir)
+        csv_candidates += [
+            d / f"CJPE_ext_SCI_HCs_Tribunals_daily_orders_test.csv",
+            d / f"cases_{split}_test.csv",
+            d / f"{split}_test.csv",
+        ]
+        # Also search one level up (in case they passed the parent folder)
+        csv_candidates += list(d.rglob("*.csv"))
+
+    # Hardcoded fallback paths relative to repo root
     data_root = Path(__file__).parent.parent / "data" / "raw" / "NyayaAnumana_Sample_Subset"
-    csv_candidates = [
+    csv_candidates += [
         data_root / "test" / "binary_test" / "CJPE_ext_SCI_HCs_Tribunals_daily_orders_test.csv",
         data_root / "test" / "ternary_test" / "CJPE_ext_SCI_HCs_tribunals_dailyorder_test_wo_RoD_ternary.csv",
         data_root / "NyayaAnumana_binary_test.csv",
         data_root / "NyayaAnumana_ternary_test.csv",
     ]
+
     for path in csv_candidates:
-        if path.exists():
+        path = Path(path)
+        if path.exists() and path.suffix == ".csv":
             print(f"  Using local CSV: {path}")
             rows = []
             with open(path, encoding="utf-8", errors="ignore") as f:
@@ -216,10 +235,12 @@ def _load_local_csv(n: int, split: str) -> list[dict]:
                     rows.append(dict(row))
                     if len(rows) >= n:
                         break
-            return rows
+            if rows:
+                return rows
+
     raise FileNotFoundError(
-        "NyayaAnumana dataset not found locally. "
-        "Set HUGGINGFACE_TOKEN or download the dataset to data/raw/NyayaAnumana_Sample_Subset/."
+        f"NyayaAnumana CSV not found. Searched data_dir={data_dir} and repo data/raw/. "
+        "Download the dataset and pass --data_dir pointing to the folder containing the CSV."
     )
 
 
