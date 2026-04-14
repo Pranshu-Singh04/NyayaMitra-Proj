@@ -169,8 +169,18 @@ def fig4_latency(data, out_dir):
     llm = [v/1000 for v in d4["llm_latencies_ms"]]  # → seconds
     nli = [v/1000 for v in d4["nli_latencies_ms"]]
 
+    # Use actual model name from graph data instead of hard-coding
+    model_label_map = {
+        "gemini"       : "Gemini 2.0 Flash",
+        "groq"         : "Llama-3.3-70B (Groq)",
+        "gpt"          : "GPT-4o-mini",
+        "inlegalllama" : "INLegalLlama-7B",
+    }
+    raw_model   = data.get("model", "LLM")
+    model_label = model_label_map.get(raw_model, raw_model)
+
     fig, ax = plt.subplots(figsize=(8, 6))
-    bp = ax.boxplot([llm, nli], labels=["LLM Generation\n(Mistral-7B)", "NLI Hallucination\nChecker"],
+    bp = ax.boxplot([llm, nli], labels=[f"LLM Generation\n({model_label})", "NLI Hallucination\nChecker"],
                     patch_artist=True, notch=False,
                     boxprops=dict(facecolor=COLORS["rag"], alpha=0.6),
                     medianprops=dict(color="black", linewidth=2))

@@ -184,8 +184,15 @@ class HallucinationEvaluator:
                     print(f"         ❌ {e}")
 
                 all_results.append(rec)
-                # Gemini free tier: ~15 RPM limit — 4s keeps us well within quota
-                delay = 4.0 if self.model_name == "gemini" else 0.5
+                # Rate limit delays:
+                # Gemini 2.0 Flash free: 15 RPM → 4s
+                # Groq 70b free: 6k TPM, ~1200 tok/query → 4 q/min max → 20s
+                if self.model_name == "gemini":
+                    delay = 4.0
+                elif self.model_name == "groq":
+                    delay = 20.0
+                else:
+                    delay = 0.5
                 time.sleep(delay)
 
         ts   = time.strftime("%Y%m%d_%H%M%S")
@@ -205,6 +212,9 @@ class HallucinationEvaluator:
         if self.model_name == "gemini":
             print("\n[Waiting 30s for Gemini rate limit to reset before ablation...]")
             time.sleep(30)
+        elif self.model_name == "groq":
+            print("\n[Waiting 60s for Groq TPM window to reset before ablation...]")
+            time.sleep(60)
 
         print(f"\n{'='*55}")
         print("PHASE 4B: RAG vs NO-RAG ABLATION STUDY")
@@ -263,8 +273,15 @@ class HallucinationEvaluator:
             print(f"  RAG:    grounding={rg:.1%}  hallucination={rh:.1%}")
             print(f"  no-RAG: grounding={ng:.1%}  hallucination={nh:.1%}")
             print(f"  Delta:  Δgrounding={dg:+.1%}")
-            # Gemini free tier: 4s delay between calls (each ablation query = 2 LLM calls)
-            delay = 8.0 if self.model_name == "gemini" else 1.0
+            # Rate limit delays (each ablation query = 2 LLM calls: RAG + no-RAG)
+            # Gemini 2.0 Flash: 15 RPM → 8s covers 2 calls
+            # Groq 70b: 6k TPM, ~2400 tok per ablation query → 30s
+            if self.model_name == "gemini":
+                delay = 8.0
+            elif self.model_name == "groq":
+                delay = 30.0
+            else:
+                delay = 1.0
             time.sleep(delay)
 
         ts   = time.strftime("%Y%m%d_%H%M%S")
@@ -634,7 +651,7 @@ class HallucinationEvaluator:
 def main():
     parser = argparse.ArgumentParser(description="NyayaMitra hallucination evaluation")
     parser.add_argument("--model",      default="gemini",
-                        choices=["gemini", "gpt", "inlegalllama"])
+                        choices=["gemini", "gpt", "groq", "inlegalllama"])
     parser.add_argument("--mode",       default="eval",
                         choices=["eval", "rag_vs_no_rag", "full", "compare"])
     parser.add_argument("--index_dir",  default="indexes")
