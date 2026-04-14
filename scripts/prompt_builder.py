@@ -323,14 +323,47 @@ class PromptBuilderV2:
         # The 4-step CoT + few-shot exceeds their token budget and confuses 8b.
         # Use a short, direct classification prompt instead.
         if self._is_small_model():
-            brief_cases    = format_cases(cases[:3], max_chars_per_case=600)
-            brief_statutes = format_statutes(statutes[:2], max_chars_per_statute=400)
+            # INLegalLlama is a specialised Indian legal model with a larger
+            # context budget (6 k chars) — give it more cases and longer facts.
+            # Groq llama-3.1-8b has strict TPM limits — keep context minimal.
+            if self.model_type == "inlegalllama":
+                n_cases        = 5
+                chars_per_case = 900
+                n_statutes     = 3
+                chars_statute  = 600
+                facts_limit    = 2500
+            else:                          # groq
+                n_cases        = 3
+                chars_per_case = 600
+                n_statutes     = 2
+                chars_statute  = 400
+                facts_limit    = 1800
+
+            brief_cases    = format_cases(cases[:n_cases],    max_chars_per_case=chars_per_case)
+            brief_statutes = format_statutes(statutes[:n_statutes], max_chars_per_statute=chars_statute)
+
+            # Build an explicit outcome summary so the model can pattern-match
+            outcome_summary = ""
+            if cases:
+                lines = []
+                for i, c in enumerate(cases[:n_cases], 1):
+                    outcome = c.get("outcome", "Unknown")
+                    name    = c.get("case_name", c.get("filename", f"Case {i}"))
+                    lines.append(f"  [Case {i}] Outcome: {outcome} — {str(name)[:60]}")
+                outcome_summary = (
+                    "OUTCOME SUMMARY OF SIMILAR CASES:\n"
+                    + "\n".join(lines)
+                    + "\n\n"
+                )
+
             user = (
                 f"You are a legal judgment predictor for Indian courts.\n\n"
-                f"CASE FACTS:\n{case_facts[:1800]}\n\n"
-                f"SIMILAR CASES FROM DATABASE:\n{brief_cases}\n\n"
+                f"CASE FACTS:\n{case_facts[:facts_limit]}\n\n"
+                f"{outcome_summary}"
+                f"SIMILAR CASES (full details):\n{brief_cases}\n\n"
                 f"APPLICABLE STATUTES:\n{brief_statutes}\n\n"
-                f"Predict the outcome of the case above.\n"
+                f"Based on the case facts and how similar cases were decided above, "
+                f"predict the outcome.\n"
                 f"Reply in EXACTLY this format (no other text before or after):\n\n"
                 f"PREDICTION: {pred_options}\n"
                 f"CONFIDENCE: HIGH or MEDIUM or LOW\n"

@@ -372,7 +372,7 @@ class LJPAccuracyEvaluator:
         #            use 12s delay to stay safe (5 queries/min)
         # GPT/local: minimal delay
         if self.model_name == "gemini":
-            inter_query_delay = 4.0
+            inter_query_delay = 7.0    # Gemini 2.5 Flash free: 10 RPM → need >6s between queries
         elif self.model_name == "groq":
             inter_query_delay = 12.0
         else:

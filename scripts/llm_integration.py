@@ -280,8 +280,7 @@ class GeminiLLM(BaseLLM):
     def _generate_with_temp(self, system_prompt: str, user_prompt: str, config) -> LLMResponse:
         from google.genai import types as genai_types
         t0 = time.time()
-        max_retries = 4
-        base_delay  = 2.0
+        max_retries = 5
 
         for attempt in range(max_retries):
             try:
@@ -317,17 +316,23 @@ class GeminiLLM(BaseLLM):
                 )
             except Exception as e:
                 err_str = str(e).lower()
-                is_retryable = any(
-                    k in err_str for k in
-                    ["429", "quota", "rate", "timeout",
-                     "503", "500", "deadline", "unavailable"]
-                )
+                is_rate_limit = any(k in err_str for k in ["429", "quota", "rate limit", "resource_exhausted"])
+                is_server_err = any(k in err_str for k in ["503", "500", "timeout", "deadline", "unavailable"])
+                is_retryable  = is_rate_limit or is_server_err
+
                 if is_retryable and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    # Rate limit: wait much longer — Gemini 2.5 Flash free tier is 10 RPM
+                    # Server error: shorter wait, then retry
+                    if is_rate_limit:
+                        delay = 20.0 * (2 ** attempt)   # 20, 40, 80, 160s
+                    else:
+                        delay = 8.0  * (2 ** attempt)   # 8, 16, 32, 64s
+                    delay = min(delay, 120.0)            # cap at 2 minutes
                     print(f"    [Gemini retry {attempt+1}/{max_retries}]"
                           f" {type(e).__name__} — waiting {delay:.0f}s")
                     time.sleep(delay)
                 else:
+                    print(f"    [Gemini error] {type(e).__name__}: {str(e)[:150]}")
                     return LLMResponse(
                         "", self.model_id,
                         (time.time() - t0) * 1000,
