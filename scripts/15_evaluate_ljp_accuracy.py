@@ -419,8 +419,14 @@ class LJPAccuracyEvaluator:
                 if pred == "UNKNOWN" and parsed.prediction:
                     print(f"           raw_pred='{parsed.prediction[:100]}'")
 
-                # If response was empty (rate limited), wait longer before next query
-                if not parsed.raw_text and parsed.latency_ms < 500:
+                # Quota exhausted — abort immediately, no point continuing
+                if parsed.error and "QUOTA_EXHAUSTED" in parsed.error:
+                    print(f"\n  [ABORT] Daily quota exhausted after {i} queries. "
+                          f"Get a new API key or wait for quota reset (midnight PT).")
+                    break
+
+                # If response was empty very fast (transient rate limit), wait longer
+                if not parsed.raw_text and parsed.latency_ms < 500 and "QUOTA" not in (parsed.error or "").upper():
                     print(f"           [rate limit detected — waiting 30s]")
                     time.sleep(30)
 

@@ -316,18 +316,32 @@ class GeminiLLM(BaseLLM):
                 )
             except Exception as e:
                 err_str = str(e).lower()
-                is_rate_limit = any(k in err_str for k in ["429", "quota", "rate limit", "resource_exhausted"])
+                # Daily quota exhausted — no point retrying, fail immediately
+                is_quota_exhausted = (
+                    ("quota" in err_str and "billing" in err_str) or
+                    ("resource_exhausted" in err_str and "quota" in err_str) or
+                    "you exceeded your current quota" in err_str
+                )
+                is_rate_limit = not is_quota_exhausted and any(
+                    k in err_str for k in ["429", "rate limit", "resource_exhausted"]
+                )
                 is_server_err = any(k in err_str for k in ["503", "500", "timeout", "deadline", "unavailable"])
-                is_retryable  = is_rate_limit or is_server_err
+                is_retryable  = (is_rate_limit or is_server_err) and not is_quota_exhausted
 
-                if is_retryable and attempt < max_retries - 1:
-                    # Rate limit: wait much longer — Gemini 2.5 Flash free tier is 10 RPM
-                    # Server error: shorter wait, then retry
+                if is_quota_exhausted:
+                    print(f"    [Gemini] Daily quota exhausted — not retrying. "
+                          f"Get a new key or wait for quota reset.")
+                    return LLMResponse(
+                        "", self.model_id,
+                        (time.time() - t0) * 1000,
+                        error="QUOTA_EXHAUSTED: " + str(e)
+                    )
+                elif is_retryable and attempt < max_retries - 1:
                     if is_rate_limit:
                         delay = 20.0 * (2 ** attempt)   # 20, 40, 80, 160s
                     else:
                         delay = 8.0  * (2 ** attempt)   # 8, 16, 32, 64s
-                    delay = min(delay, 120.0)            # cap at 2 minutes
+                    delay = min(delay, 120.0)
                     print(f"    [Gemini retry {attempt+1}/{max_retries}]"
                           f" {type(e).__name__} — waiting {delay:.0f}s")
                     time.sleep(delay)
