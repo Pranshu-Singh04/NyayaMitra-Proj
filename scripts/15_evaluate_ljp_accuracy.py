@@ -94,10 +94,9 @@ def load_nyaya_anumana(n: int, split: str = "binary", seed: int = 42, data_dir: 
         # NyayaAnumana has configurations: 'binary' and 'ternary'
         ds = load_dataset(
             "Exploration-Lab/NyayaAnumana",
-            name        = split,
-            split       = "test",
-            streaming   = True,
-            trust_remote_code = True,
+            name      = split,
+            split     = "test",
+            streaming = True,
         )
         rows = []
         for ex in ds:
@@ -358,7 +357,7 @@ class LJPAccuracyEvaluator:
             api_key                   = api_key,
             colab_url                 = colab_url,
             verbose                   = False,
-            abstain_on_low_confidence = True,
+            abstain_on_low_confidence = False,  # always predict, never abstain
         )
         self.prediction_type = split
 
@@ -367,7 +366,11 @@ class LJPAccuracyEvaluator:
         errors      = 0
         t_start     = time.time()
 
+        # Adaptive delay — Gemini free tier is 15 RPM
+        inter_query_delay = 4.0 if self.model_name == "gemini" else 0.5
+
         print(f"\nRunning {len(rows)} predictions...")
+        print(f"Inter-query delay: {inter_query_delay}s ({self.model_name})")
         print("-" * 60)
 
         for i, row in enumerate(rows, 1):
@@ -396,12 +399,16 @@ class LJPAccuracyEvaluator:
                     "abstained" : parsed.abstained,
                     "correct"   : match,
                     "latency_ms": parsed.latency_ms,
-                    "raw_pred"  : (parsed.prediction or "")[:100],
+                    "raw_pred"  : (parsed.prediction or "")[:200],
                 })
 
                 icon = "✅" if match else ("⏭" if parsed.abstained else "❌")
                 print(f"  [{i:3d}/{len(rows)}] {icon} gold={gold:20s} pred={pred:20s} "
                       f"conf={parsed.confidence:6s}  ({parsed.latency_ms:.0f}ms)")
+
+                # Show raw prediction when UNKNOWN to help diagnose
+                if pred == "UNKNOWN" and parsed.prediction:
+                    print(f"           raw_pred='{parsed.prediction[:100]}'")
 
             except Exception as e:
                 errors += 1
@@ -411,6 +418,8 @@ class LJPAccuracyEvaluator:
                     "confidence": "", "abstained": False, "correct": False,
                     "latency_ms": 0, "raw_pred": str(e),
                 })
+
+            time.sleep(inter_query_delay)
 
         elapsed = time.time() - t_start
 
@@ -464,7 +473,7 @@ def main():
         description="NyayaMitra LJP accuracy evaluation on NyayaAnumana"
     )
     parser.add_argument("--model",      required=True,
-                        choices=["inlegalllama", "gemini", "gpt"],
+                        choices=["inlegalllama", "gemini", "gpt", "groq"],
                         help="LLM backend")
     parser.add_argument("--split",      default="binary",
                         choices=["binary", "ternary"],
