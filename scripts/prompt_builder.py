@@ -210,6 +210,7 @@ class PromptBuilderV2:
     MODEL_LIMITS = {
         "gemini"        : 32000,   # Gemini has a 1M context window — be generous
         "gpt"           : 12000,   # GPT-3.5 has 16k total, leave room for output
+        "groq"          : 4000,    # llama-3.1-8b has 20k TPM; keep prompts ~2-3k tokens
         "inlegalllama"  : 6000,    # 4k context window, small prompts only
         "mistral"       : 10000,   # 8k context window
     }
@@ -263,6 +264,10 @@ class PromptBuilderV2:
         """Few-shot examples only fit in large-context models."""
         return self.model_type in ("gemini", "gpt")
 
+    def _is_small_model(self) -> bool:
+        """Small/limited-context models that need a shorter, simpler LJP prompt."""
+        return self.model_type in ("groq", "inlegalllama")
+
     # ── Public build methods ──────────────────────────────────────────────────
     def build_legal_qa(
         self, query: str, cases: list, statutes: list
@@ -309,16 +314,43 @@ class PromptBuilderV2:
         every factual claim with [Case N] or [Statute N] labels from the
         provided context. No external knowledge, no drift.
         """
+        if prediction_type == "ternary":
+            pred_options = "ALLOWED / PARTIALLY ALLOWED / DISMISSED"
+        else:
+            pred_options = "ALLOWED / DISMISSED"
+
+        # ── Simplified prompt for small / low-TPM models (groq, inlegalllama) ─
+        # The 4-step CoT + few-shot exceeds their token budget and confuses 8b.
+        # Use a short, direct classification prompt instead.
+        if self._is_small_model():
+            brief_cases    = format_cases(cases[:3], max_chars_per_case=600)
+            brief_statutes = format_statutes(statutes[:2], max_chars_per_statute=400)
+            user = (
+                f"You are a legal judgment predictor for Indian courts.\n\n"
+                f"CASE FACTS:\n{case_facts[:1800]}\n\n"
+                f"SIMILAR CASES FROM DATABASE:\n{brief_cases}\n\n"
+                f"APPLICABLE STATUTES:\n{brief_statutes}\n\n"
+                f"Predict the outcome of the case above.\n"
+                f"Reply in EXACTLY this format (no other text before or after):\n\n"
+                f"PREDICTION: {pred_options}\n"
+                f"CONFIDENCE: HIGH or MEDIUM or LOW\n"
+                f"REASONING: One sentence explaining your prediction.\n\n"
+                f"CRITICAL: The PREDICTION line must contain exactly one of: "
+                f"{pred_options}. No other words on that line."
+            )
+            return Prompt(
+                system_prompt = self.SYSTEM_BASE,
+                user_prompt   = user,
+                query_type    = QueryType.LJP,
+                context_chars = len(brief_cases) + len(brief_statutes),
+            )
+
+        # ── Full 4-step CoT prompt for large-context models (gemini, gpt) ─────
         case_ctx    = format_cases(cases, max_chars_per_case=1500)
         statute_ctx = format_statutes(statutes, max_chars_per_statute=1000)
         context     = self._trim_context(
             f"ANALOGOUS CASES:\n{case_ctx}\n\nRELEVANT STATUTES:\n{statute_ctx}"
         )
-
-        if prediction_type == "ternary":
-            pred_options = "ALLOWED / PARTIALLY ALLOWED / DISMISSED"
-        else:
-            pred_options = "ALLOWED / DISMISSED"
 
         # ── Few-shot prefix (only for large-context models) ──────────────────
         fewshot_prefix = ""
