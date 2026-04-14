@@ -366,8 +366,17 @@ class LJPAccuracyEvaluator:
         errors      = 0
         t_start     = time.time()
 
-        # Adaptive delay — Gemini free tier is 15 RPM
-        inter_query_delay = 4.0 if self.model_name == "gemini" else 0.5
+        # Rate limits:
+        # Gemini free: ~15 RPM → 4s delay
+        # Groq free: 6000 TPM, LJP prompts ~5000 tokens → ~60s per query limit
+        #            use 12s delay to stay safe (5 queries/min)
+        # GPT/local: minimal delay
+        if self.model_name == "gemini":
+            inter_query_delay = 4.0
+        elif self.model_name == "groq":
+            inter_query_delay = 12.0
+        else:
+            inter_query_delay = 0.5
 
         print(f"\nRunning {len(rows)} predictions...")
         print(f"Inter-query delay: {inter_query_delay}s ({self.model_name})")
@@ -409,6 +418,11 @@ class LJPAccuracyEvaluator:
                 # Show raw prediction when UNKNOWN to help diagnose
                 if pred == "UNKNOWN" and parsed.prediction:
                     print(f"           raw_pred='{parsed.prediction[:100]}'")
+
+                # If response was empty (rate limited), wait longer before next query
+                if not parsed.raw_text and parsed.latency_ms < 500:
+                    print(f"           [rate limit detected — waiting 30s]")
+                    time.sleep(30)
 
             except Exception as e:
                 errors += 1
