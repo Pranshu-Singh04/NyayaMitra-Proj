@@ -72,7 +72,7 @@ def normalise_prediction(raw: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # DATASET LOADER
 # ══════════════════════════════════════════════════════════════════════════════
-def load_nyaya_anumana(n: int, split: str = "binary", seed: int = 42) -> list[dict]:
+def load_nyaya_anumana(n: int, split: str = "binary", seed: int = 42, data_dir: str = None) -> list[dict]:
     """
     Load N random rows from the NyayaAnumana HuggingFace dataset.
     Falls back to the local CSV subset if the HF dataset is not available.
@@ -81,6 +81,13 @@ def load_nyaya_anumana(n: int, split: str = "binary", seed: int = 42) -> list[di
     Returns list of {"text": str, "gold_label": str}.
     """
     print(f"Loading Exploration-Lab/NyayaAnumana ({split}, n={n})...")
+
+    # If a local data_dir was provided, use the JSONL chunks directly
+    if data_dir and Path(data_dir).exists():
+        try:
+            return _load_from_jsonl(data_dir, n, split, seed)
+        except FileNotFoundError as e:
+            print(f"  JSONL load failed ({e}). Falling back to HuggingFace...")
 
     try:
         from datasets import load_dataset
@@ -132,6 +139,62 @@ def load_nyaya_anumana(n: int, split: str = "binary", seed: int = 42) -> list[di
 
     print(f"  Loaded {len(usable)} usable rows (requested {n})")
     return usable
+
+
+def _load_from_jsonl(data_dir: str, n: int, split: str, seed: int = 42) -> list[dict]:
+    """
+    Load from the chunked JSONL files produced by 02_chunk_cases.py.
+    Deduplicates by case_id, takes the longest chunk per case as the query text.
+    Fields: text, case_id, outcome (ALLOWED/DISMISSED/0/1)
+    """
+    import json, random as _random
+    data_path = Path(data_dir)
+
+    # Try common JSONL filenames for the given split
+    candidates = [
+        data_path / f"cases_{split}_test_chunks.jsonl",
+        data_path / f"cases_{split}_test.jsonl",
+        data_path / f"{split}_test_chunks.jsonl",
+    ]
+    jsonl_path = None
+    for c in candidates:
+        if c.exists():
+            jsonl_path = c
+            break
+
+    if not jsonl_path:
+        raise FileNotFoundError(
+            f"No JSONL found in {data_dir} for split '{split}'. "
+            f"Expected one of: {[str(c) for c in candidates]}"
+        )
+
+    print(f"  Loading from JSONL: {jsonl_path}")
+
+    # Collect best chunk per case_id
+    best: dict = {}   # case_id -> {"text": str, "outcome": str}
+    with open(jsonl_path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            cid     = obj.get("case_id") or obj.get("filename") or str(len(best))
+            text    = obj.get("text", "").strip()
+            outcome = obj.get("outcome") or obj.get("label") or ""
+            if not text or not outcome:
+                continue
+            # Keep longest chunk as representative text
+            if cid not in best or len(text) > len(best[cid]["text"]):
+                best[cid] = {"text": text, "outcome": str(outcome)}
+
+    rows = list(best.values())
+    _random.seed(seed)
+    _random.shuffle(rows)
+    print(f"  Found {len(rows)} unique cases in JSONL")
+    return rows[:n * 3]   # over-sample for normalise filtering
 
 
 def _load_local_csv(n: int, split: str) -> list[dict]:
@@ -397,6 +460,8 @@ def main():
                         help="Gemini/OpenAI API key")
     parser.add_argument("--colab_url",  default=None,
                         help="Colab FastAPI endpoint for INLegalLlama")
+    parser.add_argument("--data_dir",   default=None,
+                        help="Path to folder containing cases_binary_test_chunks.jsonl")
     args = parser.parse_args()
 
     if not args.api_key:
@@ -405,7 +470,7 @@ def main():
         elif args.model == "gpt":
             args.api_key = os.getenv("OPENAI_API_KEY")
 
-    rows = load_nyaya_anumana(args.n, split=args.split, seed=args.seed)
+    rows = load_nyaya_anumana(args.n, split=args.split, seed=args.seed, data_dir=args.data_dir)
     if not rows:
         print("ERROR: No usable rows loaded. Check dataset access and column names.")
         sys.exit(1)
