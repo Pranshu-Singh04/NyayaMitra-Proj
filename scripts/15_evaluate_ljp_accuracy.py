@@ -519,6 +519,8 @@ def main():
             args.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         elif args.model == "gpt":
             args.api_key = os.getenv("OPENAI_API_KEY")
+        elif args.model == "groq":
+            args.api_key = os.getenv("GROQ_API_KEY")
 
     rows = load_nyaya_anumana(args.n, split=args.split, seed=args.seed, data_dir=args.data_dir)
     if not rows:
