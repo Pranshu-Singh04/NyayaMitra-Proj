@@ -235,9 +235,29 @@ class GeminiLLM(BaseLLM):
                 "Gemini API key required. Pass api_key= or set GOOGLE_API_KEY env var."
             )
         self._client = genai.Client(api_key=key)
+        # Disable safety filters for legal content (murder/rape queries get blocked)
+        self._safety_settings = [
+            genai_types.SafetySetting(
+                category  = "HARM_CATEGORY_DANGEROUS_CONTENT",
+                threshold = "BLOCK_NONE",
+            ),
+            genai_types.SafetySetting(
+                category  = "HARM_CATEGORY_HARASSMENT",
+                threshold = "BLOCK_NONE",
+            ),
+            genai_types.SafetySetting(
+                category  = "HARM_CATEGORY_HATE_SPEECH",
+                threshold = "BLOCK_NONE",
+            ),
+            genai_types.SafetySetting(
+                category  = "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                threshold = "BLOCK_NONE",
+            ),
+        ]
         self._config = genai_types.GenerateContentConfig(
             temperature       = temperature or self.TEMPERATURE,
             max_output_tokens = max_tokens  or self.MAX_TOKENS,
+            safety_settings   = self._safety_settings,
         )
         print(f"Gemini ready ({self.MODEL_NAME})")
 
@@ -253,6 +273,7 @@ class GeminiLLM(BaseLLM):
         config = genai_types.GenerateContentConfig(
             temperature       = temp,
             max_output_tokens = self._config.max_output_tokens,
+            safety_settings   = self._safety_settings,
         )
         return self._generate_with_temp(system_prompt, user_prompt, config)
 
@@ -273,7 +294,20 @@ class GeminiLLM(BaseLLM):
                     ],
                     config   = config,
                 )
-                text  = resp.text.strip() if resp.text else ""
+                # Try resp.text first; fall back to candidates if empty
+                text = resp.text.strip() if resp.text else ""
+                if not text and resp.candidates:
+                    try:
+                        text = resp.candidates[0].content.parts[0].text.strip()
+                    except Exception:
+                        pass
+                if not text and resp.candidates:
+                    # Log finish reason so we can diagnose safety blocks
+                    try:
+                        reason = resp.candidates[0].finish_reason
+                        print(f"    [Gemini] empty response — finish_reason={reason}")
+                    except Exception:
+                        print("    [Gemini] empty response — finish_reason unknown")
                 used  = getattr(getattr(resp, "usage_metadata", None), "total_token_count", 0)
                 return LLMResponse(
                     text        = text,

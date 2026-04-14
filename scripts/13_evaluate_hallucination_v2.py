@@ -231,11 +231,17 @@ class HallucinationEvaluator:
             rag_prompt  = builder.build_legal_qa(query, cases, statutes)
             rag_resp    = self.llm.generate(rag_prompt.system_prompt, rag_prompt.user_prompt)
             rag_answer  = rag_resp.text if rag_resp and rag_resp.text else ""
+            if not rag_answer:
+                err = getattr(rag_resp, "error", "") or "empty response"
+                print(f"  [RAG] WARNING: empty response — {err[:120]}")
 
             # no-RAG: same query, no context
             print("  Generating no-RAG answer...")
             no_rag_resp   = self.llm.generate(system, query)
             no_rag_answer = no_rag_resp.text if no_rag_resp and no_rag_resp.text else ""
+            if not no_rag_answer:
+                err = getattr(no_rag_resp, "error", "") or "empty response"
+                print(f"  [no-RAG] WARNING: empty response — {err[:120]}")
 
             print(f"  RAG: {len(rag_answer.split())} words | no-RAG: {len(no_rag_answer.split())} words")
 
