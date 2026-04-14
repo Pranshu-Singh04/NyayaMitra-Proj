@@ -467,26 +467,52 @@ class GroqLLM(BaseLLM):
 
     def _generate_with_temp(self, system_prompt: str, user_prompt: str, temperature: float) -> LLMResponse:
         t0 = time.time()
-        try:
-            resp  = self._client.chat.completions.create(
-                model       = self.MODEL_NAME,
-                messages    = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_prompt},
-                ],
-                temperature = temperature,
-                max_tokens  = self._max_tokens,
-            )
-            text   = resp.choices[0].message.content.strip()
-            tokens = resp.usage.total_tokens if resp.usage else 0
-            return LLMResponse(
-                text        = text,
-                model_name  = self.model_id,
-                latency_ms  = (time.time() - t0) * 1000,
-                tokens_used = tokens,
-            )
-        except Exception as e:
-            return LLMResponse("", self.model_id, (time.time()-t0)*1000, error=str(e))
+        max_retries = 4
+        base_delay  = 2.0
+
+        for attempt in range(max_retries):
+            try:
+                resp  = self._client.chat.completions.create(
+                    model       = self.MODEL_NAME,
+                    messages    = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                    temperature = temperature,
+                    max_tokens  = self._max_tokens,
+                )
+                choice = resp.choices[0]
+                text   = (choice.message.content or "").strip()
+                tokens = resp.usage.total_tokens if resp.usage else 0
+
+                # Log finish reason if response is empty
+                if not text:
+                    reason = getattr(choice, "finish_reason", "unknown")
+                    print(f"    [Groq] empty response — finish_reason={reason}")
+
+                return LLMResponse(
+                    text        = text,
+                    model_name  = self.model_id,
+                    latency_ms  = (time.time() - t0) * 1000,
+                    tokens_used = tokens,
+                )
+            except Exception as e:
+                err_str = str(e).lower()
+                is_retryable = any(
+                    k in err_str for k in
+                    ["429", "rate", "timeout", "503", "500",
+                     "overloaded", "unavailable", "deadline"]
+                )
+                if is_retryable and attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"    [Groq retry {attempt+1}/{max_retries}]"
+                          f" {type(e).__name__} — waiting {delay:.0f}s")
+                    time.sleep(delay)
+                else:
+                    return LLMResponse("", self.model_id,
+                                       (time.time()-t0)*1000, error=str(e))
+        return LLMResponse("", self.model_id,
+                           (time.time()-t0)*1000, error="max retries exceeded")
 
     @property
     def model_id(self) -> str:
