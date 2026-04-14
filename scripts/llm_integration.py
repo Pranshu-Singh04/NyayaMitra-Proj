@@ -217,7 +217,7 @@ class INLegalLlamaLLM(BaseLLM):
 class GeminiLLM(BaseLLM):
     """Google Gemini Flash via google-generativeai SDK."""
 
-    MODEL_NAME   = "gemini-2.5-flash"
+    MODEL_NAME   = "gemini-2.0-flash"   # 15 RPM free tier, widely available
     MAX_TOKENS   = 2048
     TEMPERATURE  = 0.3
 
