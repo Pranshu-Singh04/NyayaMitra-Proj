@@ -184,16 +184,27 @@ class HallucinationEvaluator:
                     print(f"         ❌ {e}")
 
                 all_results.append(rec)
+
+                # Abort early if quota is exhausted (no point continuing)
+                if parsed.error and "QUOTA_EXHAUSTED" in parsed.error:
+                    print(f"\n  [ABORT] Daily quota exhausted. Stopping eval early.")
+                    break
+
                 # Rate limit delays:
-                # Gemini 2.0 Flash free: 15 RPM → 4s
+                # Gemini 2.0 Flash free: 15 RPM → 5s
                 # Groq 70b free: 6k TPM, ~1200 tok/query → 4 q/min max → 20s
                 if self.model_name == "gemini":
-                    delay = 4.0
+                    delay = 5.0
                 elif self.model_name == "groq":
                     delay = 20.0
                 else:
                     delay = 0.5
                 time.sleep(delay)
+            else:
+                # Inner loop completed normally — continue to next query type
+                continue
+            # Inner loop was broken (quota exhausted) — break outer loop too
+            break
 
         ts   = time.strftime("%Y%m%d_%H%M%S")
         path = self.output_dir / f"hallucination_eval_{self.model_name}_{ts}.json"
@@ -228,6 +239,8 @@ class HallucinationEvaluator:
         system  = "You are NyayaMitra, an AI legal advisor for Indian law. Answer the question accurately."
         comparisons = []
 
+        consecutive_failures = 0
+
         for i, query in enumerate(RAG_VS_NO_RAG_QUERIES, 1):
             print(f"\n[{i}/{len(RAG_VS_NO_RAG_QUERIES)}] {query}")
 
@@ -241,19 +254,38 @@ class HallucinationEvaluator:
             rag_prompt  = builder.build_legal_qa(query, cases, statutes)
             rag_resp    = self.llm.generate(rag_prompt.system_prompt, rag_prompt.user_prompt)
             rag_answer  = rag_resp.text if rag_resp and rag_resp.text else ""
+            rag_error   = getattr(rag_resp, "error", "") or ""
             if not rag_answer:
-                err = getattr(rag_resp, "error", "") or "empty response"
-                print(f"  [RAG] WARNING: empty response — {err[:120]}")
+                print(f"  [RAG] WARNING: empty response — {rag_error[:120]}")
+
+            # Abort immediately on quota exhaustion
+            if "QUOTA_EXHAUSTED" in rag_error or "exceeded your current quota" in rag_error.lower():
+                print(f"\n  [ABORT] Daily quota exhausted. Stopping ablation.")
+                break
 
             # no-RAG: same query, no context
             print("  Generating no-RAG answer...")
             no_rag_resp   = self.llm.generate(system, query)
             no_rag_answer = no_rag_resp.text if no_rag_resp and no_rag_resp.text else ""
+            no_rag_error  = getattr(no_rag_resp, "error", "") or ""
             if not no_rag_answer:
-                err = getattr(no_rag_resp, "error", "") or "empty response"
-                print(f"  [no-RAG] WARNING: empty response — {err[:120]}")
+                print(f"  [no-RAG] WARNING: empty response — {no_rag_error[:120]}")
+
+            # Abort on quota exhaustion from no-RAG call
+            if "QUOTA_EXHAUSTED" in no_rag_error or "exceeded your current quota" in no_rag_error.lower():
+                print(f"\n  [ABORT] Daily quota exhausted. Stopping ablation.")
+                break
 
             print(f"  RAG: {len(rag_answer.split())} words | no-RAG: {len(no_rag_answer.split())} words")
+
+            # Track consecutive failures — if both are empty 3 times in a row, stop
+            if not rag_answer and not no_rag_answer:
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    print(f"\n  [ABORT] 3 consecutive empty responses. Quota likely exhausted.")
+                    break
+            else:
+                consecutive_failures = 0
 
             comp = self.checker.compare_rag_vs_no_rag(
                 query           = query,
